@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: radial-gradient(ellipse at top, #0e4a37 0%, #06231a 60%, #03110c 100%);
+  color: #f5f5dc;
+  min-height: 100vh;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.card-shape {
+  aspect-ratio: 2 / 3;
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+/* Flip animado de cartas */
+.flip-card {
+  perspective: 800px;
+  width: 56px;
+  aspect-ratio: 2 / 3;
+}
+.flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.6s ease;
+}
+.flip-card.is-flipped .flip-inner {
+  transform: rotateY(180deg);
+}
+.flip-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 0.5rem;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1.5rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+.flip-front {
+  background: linear-gradient(135deg, #5b1a1a 0%, #2c0606 100%);
+  color: #f8d7a3;
+  font-size: 1.6rem;
+  border: 2px solid #f8d7a3;
+}
+.flip-front::before {
+  content: "🐱";
+  font-size: 1.7rem;
+}
+.flip-back {
+  background: #fff;
+  color: #111;
+  transform: rotateY(180deg);
+}
+.card-slot {
+  width: 56px;
+  aspect-ratio: 2 / 3;
+  border-radius: 0.5rem;
+  border: 2px dashed rgba(255, 255, 255, 0.15);
+}
+
+/* Modal del reveal */
+.reveal-overlay {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+.reveal-pop {
+  animation: revealPop 0.45s ease both;
+}
+@keyframes revealPop {
+  from { opacity: 0; transform: scale(0.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes countdownBar {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+.countdown-bar {
+  animation: countdownBar 5s linear forwards;
+}
