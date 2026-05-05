@@ -7,6 +7,9 @@ import { createServerSupabase } from "@/lib/supabase/server";
 
 const NameSchema = z.string().trim().min(1).max(24);
 const CodeSchema = z.string().trim().min(4).max(8).transform((s) => s.toUpperCase());
+const DeckModeSchema = z
+  .enum(["classic", "single", "negative", "positive", "pairs"])
+  .default("classic");
 
 // Garantiza una sesión (anónima si hace falta) antes de cualquier RPC.
 // Cubre el caso donde el middleware no corrió o la cookie aún no llegó.
@@ -25,9 +28,15 @@ async function ensureAuth(supabase: SupabaseClient) {
 
 export async function createRoomAction(formData: FormData) {
   const name = NameSchema.parse(formData.get("name"));
+  const deckMode = DeckModeSchema.parse(
+    formData.get("deck_mode") ?? "classic",
+  );
   const supabase = createServerSupabase();
   await ensureAuth(supabase);
-  const { data, error } = await supabase.rpc("create_room", { p_name: name });
+  const { data, error } = await supabase.rpc("create_room", {
+    p_name: name,
+    p_deck_mode: deckMode,
+  });
   if (error) throw new Error(error.message);
   const code = data?.[0]?.out_room_code;
   if (!code) throw new Error("no room code returned");
@@ -65,6 +74,33 @@ export async function submitPickAction(roundId: string, cardValue: number) {
   await supabase.rpc("reveal_round", { p_round_id: roundId });
 }
 
+const RuleSchema = z.enum([
+  "subtract",
+  "no_cancel",
+  "swap",
+  "add_right",
+  "add_left",
+  "sub_right",
+  "sub_left",
+  "cancel_even",
+  "cancel_odd",
+  "none",
+  "rotate_right",
+  "rotate_left",
+]);
+
+export async function submitRulePickAction(roundId: string, ruleKind: string) {
+  const rule = RuleSchema.parse(ruleKind);
+  const supabase = createServerSupabase();
+  await ensureAuth(supabase);
+  const { error } = await supabase.rpc("submit_rule_pick", {
+    p_round_id: roundId,
+    p_rule_kind: rule,
+  });
+  if (error) throw new Error(error.message);
+  await supabase.rpc("reveal_round", { p_round_id: roundId });
+}
+
 export async function tryRevealAction(roundId: string) {
   const supabase = createServerSupabase();
   await ensureAuth(supabase);
@@ -83,5 +119,12 @@ export async function redealHandsAction(roomId: string) {
   const supabase = createServerSupabase();
   await ensureAuth(supabase);
   const { error } = await supabase.rpc("redeal_hands", { p_room_id: roomId });
+  if (error) throw new Error(error.message);
+}
+
+export async function redealRuleHandsAction(roomId: string) {
+  const supabase = createServerSupabase();
+  await ensureAuth(supabase);
+  const { error } = await supabase.rpc("redeal_rule_hands", { p_room_id: roomId });
   if (error) throw new Error(error.message);
 }

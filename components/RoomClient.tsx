@@ -9,6 +9,8 @@ import type {
   RoundPickRow,
   RoundResultRow,
   RoundRow,
+  RoundRulePickRow,
+  RuleKind,
 } from "@/types/db";
 import Lobby from "./Lobby";
 import GameBoard from "./GameBoard";
@@ -34,12 +36,15 @@ export default function RoomClient({
   const [picks, setPicks] = useState<RoundPickRow[]>([]);
   const [result, setResult] = useState<RoundResultRow | null>(null);
   const [myHand, setMyHand] = useState<number[]>([]);
+  const [myRuleHand, setMyRuleHand] = useState<RuleKind[]>([]);
+  const [rulePick, setRulePick] = useState<RoundRulePickRow | null>(null);
 
-  // Cargar picks/result cuando cambia la ronda
+  // Cargar picks/result/rule pick cuando cambia la ronda
   useEffect(() => {
     if (!round) {
       setPicks([]);
       setResult(null);
+      setRulePick(null);
       return;
     }
     let cancelled = false;
@@ -50,6 +55,13 @@ export default function RoomClient({
         .eq("round_id", round.id)
         .returns<RoundPickRow[]>();
       if (!cancelled) setPicks(pickRows ?? []);
+
+      const { data: rp } = await supabase
+        .from("round_rule_picks")
+        .select("*")
+        .eq("round_id", round.id)
+        .maybeSingle<RoundRulePickRow>();
+      if (!cancelled) setRulePick(rp ?? null);
 
       if (round.status === "scored" || round.status === "revealed") {
         const { data: r } = await supabase
@@ -172,16 +184,21 @@ export default function RoomClient({
     return () => clearInterval(timer);
   }, [supabase, room.id, room.status]);
 
-  // Polling de picks y resultado de la ronda activa
+  // Polling de picks, rule pick y resultado de la ronda activa
   useEffect(() => {
     if (!round) return;
     const timer = setInterval(async () => {
-      const [pks, res] = await Promise.all([
+      const [pks, rp, res] = await Promise.all([
         supabase
           .from("round_picks")
           .select("*")
           .eq("round_id", round.id)
           .returns<RoundPickRow[]>(),
+        supabase
+          .from("round_rule_picks")
+          .select("*")
+          .eq("round_id", round.id)
+          .maybeSingle<RoundRulePickRow>(),
         supabase
           .from("round_results")
           .select("*")
@@ -189,25 +206,34 @@ export default function RoomClient({
           .maybeSingle<RoundResultRow>(),
       ]);
       if (pks.data) setPicks(pks.data);
+      setRulePick(rp.data ?? null);
       if (res.data) setResult(res.data);
     }, 1500);
     return () => clearInterval(timer);
   }, [supabase, round?.id]);
 
-  // Cargar mi mano cuando cambia el estado de la sala (lobby → in_progress)
-  // y refrescar periódicamente como fallback de Realtime.
+  // Cargar mi mano numérica + mano de reglas, con polling de respaldo.
   useEffect(() => {
     let cancelled = false;
-    const fetchHand = async () => {
-      const { data } = await supabase
-        .from("player_hands")
-        .select("hand")
-        .eq("player_id", meId)
-        .maybeSingle<{ hand: number[] }>();
-      if (!cancelled) setMyHand(data?.hand ?? []);
+    const fetchHands = async () => {
+      const [num, rules] = await Promise.all([
+        supabase
+          .from("player_hands")
+          .select("hand")
+          .eq("player_id", meId)
+          .maybeSingle<{ hand: number[] }>(),
+        supabase
+          .from("player_rule_hands")
+          .select("hand")
+          .eq("player_id", meId)
+          .maybeSingle<{ hand: RuleKind[] }>(),
+      ]);
+      if (cancelled) return;
+      setMyHand(num.data?.hand ?? []);
+      setMyRuleHand(rules.data?.hand ?? []);
     };
-    fetchHand();
-    const timer = setInterval(fetchHand, 1500);
+    fetchHands();
+    const timer = setInterval(fetchHands, 1500);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -229,6 +255,8 @@ export default function RoomClient({
       result={result}
       meId={meId}
       myHand={myHand}
+      myRuleHand={myRuleHand}
+      rulePick={rulePick}
     />
   );
 }

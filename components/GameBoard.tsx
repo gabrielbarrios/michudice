@@ -1,18 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useTransition } from "react";
 import type {
   PlayerRow,
   RoomRow,
   RoundPickRow,
   RoundResultRow,
   RoundRow,
+  RoundRulePickRow,
+  RuleKind,
 } from "@/types/db";
 import CardPicker from "./CardPicker";
 import PlayedCard from "./PlayedCard";
+import RulePicker, { RULE_LABEL, RULE_DESC } from "./RulePicker";
 import {
   advanceRoundAction,
   redealHandsAction,
+  redealRuleHandsAction,
   tryRevealAction,
 } from "@/app/actions";
 
@@ -24,9 +28,11 @@ interface Props {
   result: RoundResultRow | null;
   meId: string;
   myHand: number[];
+  myRuleHand: RuleKind[];
+  rulePick: RoundRulePickRow | null;
 }
 
-const REVEAL_DURATION_MS = 5000;
+const REVEAL_DURATION_MS = 10000;
 
 export default function GameBoard({
   room,
@@ -36,27 +42,26 @@ export default function GameBoard({
   result,
   meId,
   myHand,
+  myRuleHand,
+  rulePick,
 }: Props) {
   const [, startReveal] = useTransition();
   const [, startAdvance] = useTransition();
   const advanceTriggered = useRef<string | null>(null);
 
-  // Cuando todos eligen, dispara reveal una vez por ronda.
+  // Cuando todos eligen número Y el Michudice eligió regla, intenta revelar.
   useEffect(() => {
     if (!round) return;
     if (round.status !== "picking") return;
-    if (picks.length >= players.length) {
+    if (picks.length >= players.length && rulePick) {
       startReveal(() => tryRevealAction(round.id));
     }
-  }, [round, picks.length, players.length]);
+  }, [round, picks.length, players.length, rulePick]);
 
-  // Cuando la ronda llega a 'scored' / 'revealed', mostramos cartas 5s y luego
-  // avanzamos. Solo el host dispara advance_round; los demás esperan a la
-  // suscripción / polling para ver la nueva ronda. La función SQL es idempotente.
-  const isHost =
-    players.find((p) => p.id === meId)?.user_id === room.host_id;
+  const isHost = players.find((p) => p.id === meId)?.user_id === room.host_id;
   const isRevealing =
     !!round && (round.status === "revealed" || round.status === "scored");
+  const isMichudice = !!round && round.michudice_player_id === meId;
 
   useEffect(() => {
     if (!round || !isRevealing) return;
@@ -79,12 +84,27 @@ export default function GameBoard({
   }
 
   const myPick = picks.find((p) => p.player_id === meId)?.card_value ?? null;
+  const myRulePick =
+    rulePick && rulePick.player_id === meId ? rulePick.rule_kind : null;
   const michudice = players.find((p) => p.id === round.michudice_player_id);
   const cardsLeft = Math.max(...players.map((p) => p.hand_size ?? 0), 0);
   const noHandsDealt = players.every((p) => (p.hand_size ?? 0) === 0);
 
+  // Orden por seat para el listado y cálculo de vecinos: right = seat+1, left = seat-1.
+  const sortedPlayers = players.slice().sort((a, b) => a.seat - b.seat);
+  const myIdx = sortedPlayers.findIndex((p) => p.id === meId);
+  const N = sortedPlayers.length;
+  const rightNeighborId =
+    myIdx >= 0 && N > 1 ? sortedPlayers[(myIdx + 1) % N].id : null;
+  const leftNeighborId =
+    myIdx >= 0 && N > 1 ? sortedPlayers[(myIdx - 1 + N) % N].id : null;
+  const rightNeighborName =
+    sortedPlayers.find((p) => p.id === rightNeighborId)?.name ?? null;
+  const leftNeighborName =
+    sortedPlayers.find((p) => p.id === leftNeighborId)?.name ?? null;
+
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-8 px-6 py-10">
+    <main className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-10">
       <header className="flex items-center justify-between">
         <div>
           <p className="text-xs uppercase tracking-widest text-white/40">Sala</p>
@@ -102,7 +122,41 @@ export default function GameBoard({
         <span className="font-semibold text-amber-200">
           {michudice?.name ?? "?"}
         </span>
+        <p className="mt-1 text-xs text-amber-100/70">
+          {rulePick
+            ? "Carta de regla colocada boca abajo · se revela junto a las cartas"
+            : isMichudice
+              ? "👇 Debes elegir UNA carta de regla (obligatorio)"
+              : "Esperando que el Michudice elija su carta de regla..."}
+        </p>
       </div>
+
+      {isMichudice && round.status === "picking" && !rulePick && (
+        <div className="reveal-pop rounded-2xl bg-amber-400/15 p-4 text-center ring-2 ring-amber-300/50">
+          <p className="text-amber-100">
+            ⚡ Eres el Michudice. Cada ronda <b>debes</b> jugar 1 carta de regla.
+          </p>
+          {myRuleHand.length === 0 && (
+            <div className="mt-3">
+              <p className="text-sm text-amber-200/80">
+                No tienes cartas de regla disponibles.
+              </p>
+              {isHost ? (
+                <button
+                  onClick={() => redealRuleHandsAction(room.id)}
+                  className="mt-2 rounded-md bg-amber-400 px-4 py-2 font-semibold text-black hover:bg-amber-300"
+                >
+                  Repartir cartas de regla
+                </button>
+              ) : (
+                <p className="mt-1 text-xs text-amber-100/70">
+                  Pide al anfitrión que reparta las cartas de regla.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {noHandsDealt && (
         <div className="rounded-2xl bg-rose-500/10 p-4 text-center ring-1 ring-rose-300/30">
@@ -123,29 +177,71 @@ export default function GameBoard({
       )}
 
       <section>
-        <h2 className="mb-3 text-sm uppercase tracking-widest text-white/50">
-          Jugadores
-        </h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm uppercase tracking-widest text-white/50">
+            Jugadores
+          </h2>
+          {(leftNeighborName || rightNeighborName) && (
+            <p className="text-xs text-white/50">
+              {leftNeighborName && (
+                <span className="mr-3">
+                  ⬅️ tu izquierda:{" "}
+                  <b className="text-sky-200">{leftNeighborName}</b>
+                </span>
+              )}
+              {rightNeighborName && (
+                <span>
+                  tu derecha:{" "}
+                  <b className="text-fuchsia-200">{rightNeighborName}</b> ➡️
+                </span>
+              )}
+            </p>
+          )}
+        </div>
         <ul className="grid gap-2 sm:grid-cols-2">
-          {players.map((p) => {
+          {sortedPlayers.map((p) => {
             const theirCard = picks.find((x) => x.player_id === p.id)?.card_value;
-            // Mientras se está eligiendo, solo se muestra carta boca abajo
-            // para los que ya eligieron. Cuando se revela, todos voltean.
             const cardValue = theirCard ?? null;
             const showOwnFace = p.id === meId && cardValue !== null && !isRevealing;
+            const isLeft = p.id === leftNeighborId;
+            const isRight = p.id === rightNeighborId;
+            const ringClass = isLeft
+              ? "ring-2 ring-sky-300/50"
+              : isRight
+                ? "ring-2 ring-fuchsia-300/50"
+                : "ring-1 ring-white/10";
             return (
               <li
                 key={p.id}
-                className="flex items-center justify-between rounded-md bg-white/5 px-4 py-2 ring-1 ring-white/10"
+                className={
+                  "flex items-center justify-between rounded-md bg-white/5 px-4 py-2 " +
+                  ringClass
+                }
               >
-                <div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-xs text-white/30">#{p.seat + 1}</span>
                   <span>{p.name}</span>
-                  {p.id === meId && <span className="ml-2 text-emerald-300">(tú)</span>}
-                  {p.id === round.michudice_player_id && <span className="ml-2">🐱</span>}
+                  {p.id === meId && (
+                    <span className="text-emerald-300">(tú)</span>
+                  )}
+                  {p.id === round.michudice_player_id && <span>🐱</span>}
+                  {isLeft && (
+                    <span className="rounded-full bg-sky-400/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                      ⬅️ izquierda
+                    </span>
+                  )}
+                  {isRight && (
+                    <span className="rounded-full bg-fuchsia-400/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-fuchsia-200">
+                      derecha ➡️
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-white/40">
                     {p.hand_size ?? 0} 🂠
+                  </span>
+                  <span className="text-xs text-amber-200/60">
+                    {p.rule_hand_size ?? 0} 📜
                   </span>
                   <span className="text-sm text-white/60">{p.score} pts</span>
                   <PlayedCard
@@ -160,20 +256,64 @@ export default function GameBoard({
       </section>
 
       {round.status === "picking" && (
-        <section>
-          <h2 className="mb-3 text-sm uppercase tracking-widest text-white/50">
-            Tu carta
-          </h2>
-          <CardPicker
-            roundId={round.id}
-            hand={myHand}
-            myPick={myPick}
-            disabled={false}
-          />
-          <p className="mt-3 text-center text-sm text-white/50">
-            {picks.length}/{players.length} jugadores listos
-          </p>
-        </section>
+        <div
+          className={
+            "grid gap-6 " +
+            (isMichudice ? "lg:grid-cols-[1fr_320px]" : "")
+          }
+        >
+          <section className="rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
+            <h2 className="mb-3 text-sm uppercase tracking-widest text-white/50">
+              Tu carta
+            </h2>
+            <CardPicker
+              roundId={round.id}
+              hand={myHand}
+              myPick={myPick}
+              disabled={false}
+            />
+            <p className="mt-3 text-center text-sm text-white/50">
+              {picks.length}/{players.length} jugadores listos
+              {" · "}
+              {rulePick ? "regla lista 📜" : "regla pendiente 📜"}
+            </p>
+          </section>
+
+          {isMichudice && (
+            <section className="rounded-2xl bg-amber-300/5 p-5 ring-2 ring-amber-300/40">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-200">
+                  📜 Carta de regla
+                </h2>
+                <span
+                  className={
+                    "rounded-full px-2 py-0.5 text-xs " +
+                    (rulePick
+                      ? "bg-emerald-400/20 text-emerald-200"
+                      : "bg-amber-400/30 text-amber-100")
+                  }
+                >
+                  {rulePick ? "✓ elegida" : "obligatoria"}
+                </span>
+              </div>
+              {myRuleHand.length === 0 && !myRulePick ? (
+                <p className="text-center text-sm text-amber-100/70">
+                  No tienes cartas de regla. Pide al anfitrión repartir desde el
+                  banner amarillo de arriba.
+                </p>
+              ) : (
+                <RulePicker
+                  roundId={round.id}
+                  hand={myRuleHand}
+                  myPick={myRulePick}
+                />
+              )}
+              <p className="mt-3 text-center text-xs text-amber-100/60">
+                Se coloca boca abajo. Se voltea junto a las cartas de número.
+              </p>
+            </section>
+          )}
+        </div>
       )}
 
       {isRevealing && (
@@ -181,6 +321,7 @@ export default function GameBoard({
           players={players}
           picks={picks}
           result={result}
+          rule={round.rule_played ?? rulePick?.rule_kind ?? null}
           durationMs={REVEAL_DURATION_MS}
         />
       )}
@@ -192,11 +333,13 @@ function RevealOverlay({
   players,
   picks,
   result,
+  rule,
   durationMs,
 }: {
   players: PlayerRow[];
   picks: RoundPickRow[];
   result: RoundResultRow | null;
+  rule: RuleKind | null;
   durationMs: number;
 }) {
   const nameOf = (id: string) =>
@@ -213,6 +356,16 @@ function RevealOverlay({
           <h2 className="font-display text-2xl">Revelando ronda</h2>
           <span className="text-xs text-white/40">{durationMs / 1000}s</span>
         </div>
+
+        {rule && (
+          <div className="rounded-xl bg-amber-300/10 p-3 ring-1 ring-amber-300/30">
+            <p className="text-xs uppercase tracking-widest text-amber-200/70">
+              Carta de regla
+            </p>
+            <p className="font-semibold text-amber-100">{RULE_LABEL[rule]}</p>
+            <p className="text-xs text-amber-100/70">{RULE_DESC[rule]}</p>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center justify-center gap-3">
           {sortedPicks.map((p) => (
@@ -234,8 +387,8 @@ function RevealOverlay({
             )}
             {ladders.map((l, i) => (
               <p key={i} className="text-amber-200">
-                🪜 Escalera {l.cards.join(" → ")} = +{l.sum} para{" "}
-                <b>{nameOf(l.winner_id)}</b>
+                🪜 Escalera {l.cards.join(" → ")} = {l.sum >= 0 ? "+" : ""}
+                {l.sum} para <b>{nameOf(l.winner_id)}</b>
               </p>
             ))}
             {deltas.length > 0 ? (
@@ -245,7 +398,14 @@ function RevealOverlay({
                     <span className="text-emerald-300">
                       {nameOf(d.player_id)}
                     </span>{" "}
-                    +{d.points} ({d.reason === "ladder" ? "escalera" : "carta"})
+                    {d.points >= 0 ? "+" : ""}
+                    {d.points} (
+                    {d.reason === "ladder"
+                      ? "escalera"
+                      : d.reason === "neighbor"
+                        ? "vecino"
+                        : "carta"}
+                    )
                   </li>
                 ))}
               </ul>

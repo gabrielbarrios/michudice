@@ -2,13 +2,21 @@
 
 import { useTransition } from "react";
 import { startGameAction } from "@/app/actions";
-import type { PlayerRow, RoomRow } from "@/types/db";
+import type { DeckMode, PlayerRow, RoomRow } from "@/types/db";
 
 interface Props {
   room: RoomRow;
   players: PlayerRow[];
   meId: string;
 }
+
+const DECK_MODE_LABEL: Record<DeckMode, string> = {
+  classic: "🎲 Clásico",
+  single: "🎯 Solo 1",
+  negative: "📉 Negativos",
+  positive: "📈 Positivos",
+  pairs: "👯 Pares",
+};
 
 export default function Lobby({ room, players, meId }: Props) {
   const [pending, start] = useTransition();
@@ -23,6 +31,12 @@ export default function Lobby({ room, players, meId }: Props) {
         <p className="font-display text-5xl tracking-[0.4em]">{room.code}</p>
         <p className="mt-2 text-sm text-white/60">
           Comparte el código. Mínimo 3, máximo {room.max_players} jugadores.
+        </p>
+        <p className="mt-1 text-xs text-white/50">
+          Modo del mazo:{" "}
+          <span className="font-semibold text-white/80">
+            {DECK_MODE_LABEL[room.deck_mode] ?? room.deck_mode}
+          </span>
         </p>
       </div>
 

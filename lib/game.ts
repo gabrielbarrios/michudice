@@ -49,6 +49,7 @@ export type PlayerId = string;
 export interface Pick {
   playerId: PlayerId;
   cardValue: number;
+  seat?: number;
 }
 
 export interface LadderResult {
@@ -60,51 +61,213 @@ export interface LadderResult {
 export interface ScoreDelta {
   playerId: PlayerId;
   points: number;
-  reason: "unique" | "ladder";
+  reason: "unique" | "ladder" | "neighbor";
+}
+
+export interface SwapInfo {
+  lowValue: number;
+  highValue: number;
+  lowOriginalPlayerId: PlayerId;
+  highOriginalPlayerId: PlayerId;
 }
 
 export interface RoundResult {
   canceled: number[];           // valores cancelados por repetición
-  uniquePicks: Pick[];          // picks que no fueron cancelados
+  uniquePicks: Pick[];          // picks que cuentan en la ronda (post-swap si aplica)
   ladders: LadderResult[];      // escaleras detectadas
-  deltas: ScoreDelta[];         // puntos a sumar por jugador
+  deltas: ScoreDelta[];         // puntos a sumar/restar por jugador
+  rule: RuleKind | "normal";    // regla que aplicó esta ronda
+  swap?: SwapInfo;              // detalle del intercambio cuando rule = 'swap'
 }
 
-/** Calcula el resultado de una ronda dados los picks. */
-export function scoreRound(picks: ReadonlyArray<Pick>): RoundResult {
+/**
+ * Reglas especiales que altera la ronda. Las juega el Michudice.
+ *  - "subtract":  todos los puntos de la ronda se restan (incluida escalera).
+ *                 Las cartas iguales siguen cancelándose.
+ *  - "no_cancel": las cartas iguales NO se cancelan; cada copia suma para
+ *                 su dueño y los duplicados pueden formar parte de la escalera.
+ *  - "swap":      tras la cancelación, el dueño de la carta única más baja y
+ *                 el de la más alta intercambian valores: el que bajó la
+ *                 menor ahora suma el valor de la mayor y viceversa. La
+ *                 escalera se detecta después del swap, y el bono va a quien
+ *                 quede con el valor más bajo de la escalera.
+ *  - "add_right" / "add_left" / "sub_right" / "sub_left":
+ *                 Cada jugador (cuya carta NO fue cancelada) suma o resta el
+ *                 valor jugado por su vecino de seat (right = seat+1,
+ *                 left = seat-1, modular). Si la carta del vecino fue
+ *                 cancelada, no se aplica el bonus para ese jugador.
+ *                 La cancelación normal y la escalera siguen aplicando.
+ *  - "cancel_even" / "cancel_odd":
+ *                 Todas las cartas con valor par (o impar, según la regla)
+ *                 se cancelan automáticamente, jugadas o no por uno o
+ *                 varios jugadores. La cancelación por duplicado sigue
+ *                 aplicando sobre el resto.
+ *  - "none":      No hay variante. Se juega con las reglas base sin
+ *                 modificador. Útil para que el Michudice cumpla la
+ *                 obligación de jugar una carta de regla sin afectar el
+ *                 puntaje. Internamente equivale a `null`.
+ *  - "rotate_right" / "rotate_left":
+ *                 ANTES del reveal, las cartas rotan: cada jugador entrega
+ *                 su carta al vecino derecho (resp. izquierdo) y recibe la
+ *                 del vecino izquierdo (resp. derecho). Tras la rotación
+ *                 se aplica el flujo base de cancelación y escalera, así
+ *                 que la carta que recibiste puede cancelarse si coincide
+ *                 con otra. La rotación NO altera la regla aplicada al
+ *                 puntaje (sign=+1, sin no_cancel, sin paridad).
+ */
+export type RuleKind =
+  | "subtract"
+  | "no_cancel"
+  | "swap"
+  | "add_right"
+  | "add_left"
+  | "sub_right"
+  | "sub_left"
+  | "cancel_even"
+  | "cancel_odd"
+  | "none"
+  | "rotate_right"
+  | "rotate_left";
+export const RULE_KINDS: ReadonlyArray<RuleKind> = [
+  "subtract",
+  "no_cancel",
+  "swap",
+  "add_right",
+  "add_left",
+  "sub_right",
+  "sub_left",
+  "cancel_even",
+  "cancel_odd",
+  "none",
+  "rotate_right",
+  "rotate_left",
+];
+
+/** Calcula el resultado de una ronda dados los picks y la regla activa. */
+export function scoreRound(
+  picks: ReadonlyArray<Pick>,
+  rule: RuleKind | null = null,
+): RoundResult {
+  // 'none' es la carta "sin modificador": equivale a no aplicar regla.
+  if (rule === "none") rule = null;
+
+  // Rotación: cada jugador entrega su carta al vecino indicado por la regla.
+  // El cálculo posterior se hace sobre las picks rotadas.
+  // rotate_right (dir=1): yo recibo la carta de seat-1 (mi vecino izquierdo).
+  // rotate_left  (dir=-1): yo recibo la carta de seat+1 (mi vecino derecho).
+  const rotateDir =
+    rule === "rotate_right" ? 1
+    : rule === "rotate_left" ? -1
+    : 0;
+  let workingPicks: ReadonlyArray<Pick> = picks;
+  if (rotateDir !== 0) {
+    const seated = picks
+      .filter((p) => typeof p.seat === "number")
+      .slice()
+      .sort((a, b) => (a.seat as number) - (b.seat as number));
+    const len = seated.length;
+    if (len > 1) {
+      workingPicks = seated.map((p, i) => {
+        const sourceIdx = ((i - rotateDir) % len + len) % len;
+        return {
+          playerId: p.playerId,
+          cardValue: seated[sourceIdx].cardValue,
+          seat: p.seat,
+        };
+      });
+    }
+  }
+
   const counts = new Map<number, number>();
-  for (const p of picks) counts.set(p.cardValue, (counts.get(p.cardValue) ?? 0) + 1);
+  for (const p of workingPicks) counts.set(p.cardValue, (counts.get(p.cardValue) ?? 0) + 1);
+
+  const noCancel = rule === "no_cancel";
+  const sign = rule === "subtract" ? -1 : 1;
+  const cancelEven = rule === "cancel_even";
+  const cancelOdd = rule === "cancel_odd";
 
   const canceled: number[] = [];
   const uniqueValues: number[] = [];
   for (const [value, count] of counts) {
-    if (count > 1) canceled.push(value);
+    const parityCancel =
+      (cancelEven && value % 2 === 0) || (cancelOdd && value % 2 !== 0);
+    if (parityCancel) canceled.push(value);
+    else if (count > 1 && !noCancel) canceled.push(value);
     else uniqueValues.push(value);
   }
   canceled.sort((a, b) => a - b);
   uniqueValues.sort((a, b) => a - b);
 
-  const uniquePicks = picks
-    .filter((p) => !canceled.includes(p.cardValue))
+  let uniquePicks = workingPicks
+    .filter((p) => noCancel || !canceled.includes(p.cardValue))
     .slice()
     .sort((a, b) => a.cardValue - b.cardValue);
 
-  const ladders = detectLadders(uniqueValues, uniquePicks);
+  let swapInfo: SwapInfo | undefined;
+  if (rule === "swap" && uniquePicks.length >= 2) {
+    const low = uniquePicks[0];
+    const high = uniquePicks[uniquePicks.length - 1];
+    if (low.cardValue !== high.cardValue) {
+      swapInfo = {
+        lowValue: low.cardValue,
+        highValue: high.cardValue,
+        lowOriginalPlayerId: low.playerId,
+        highOriginalPlayerId: high.playerId,
+      };
+      uniquePicks = uniquePicks.map((p, i) => {
+        if (i === 0) return { playerId: high.playerId, cardValue: low.cardValue };
+        if (i === uniquePicks.length - 1)
+          return { playerId: low.playerId, cardValue: high.cardValue };
+        return p;
+      });
+    }
+  }
 
-  // Reglas de puntuación:
-  //  * Cada carta única suma SIEMPRE su valor a quien la jugó.
-  //  * Adicionalmente, por cada escalera detectada (>=3 cartas consecutivas),
-  //    el dueño de la carta más baja recibe la SUMA total de la escalera
-  //    como bono encima de su valor individual.
+  const rawLadders = detectLadders(uniqueValues, uniquePicks);
+  const ladders = rawLadders.map((l) => ({ ...l, sum: l.sum * sign }));
+
   const deltas: ScoreDelta[] = [];
   for (const p of uniquePicks) {
-    deltas.push({ playerId: p.playerId, points: p.cardValue, reason: "unique" });
+    deltas.push({ playerId: p.playerId, points: p.cardValue * sign, reason: "unique" });
   }
   for (const l of ladders) {
     deltas.push({ playerId: l.winnerId, points: l.sum, reason: "ladder" });
   }
 
-  return { canceled, uniquePicks, ladders, deltas };
+  const neighborDir =
+    rule === "add_right" || rule === "sub_right" ? 1
+    : rule === "add_left" || rule === "sub_left" ? -1
+    : 0;
+  const neighborSign = rule === "sub_right" || rule === "sub_left" ? -1 : 1;
+  if (neighborDir !== 0) {
+    const seated = workingPicks
+      .filter((p) => typeof p.seat === "number")
+      .slice()
+      .sort((a, b) => (a.seat as number) - (b.seat as number));
+    const uniqueIds = new Set(uniquePicks.map((p) => p.playerId));
+    const len = seated.length;
+    for (let i = 0; i < len; i++) {
+      const me = seated[i];
+      if (!uniqueIds.has(me.playerId)) continue;
+      const idx = ((i + neighborDir) % len + len) % len;
+      const neighbor = seated[idx];
+      if (!uniqueIds.has(neighbor.playerId)) continue;
+      deltas.push({
+        playerId: me.playerId,
+        points: neighbor.cardValue * neighborSign,
+        reason: "neighbor",
+      });
+    }
+  }
+
+  return {
+    canceled,
+    uniquePicks,
+    ladders,
+    deltas,
+    rule: rule ?? "normal",
+    ...(swapInfo ? { swap: swapInfo } : {}),
+  };
 }
 
 function detectLadders(
