@@ -221,6 +221,7 @@ funcionan idempotentes:
 0016_no_modifier_rule.sql   regla 'none' (sin variante); score_picks normaliza 'none' → null
 0017_rotate_rules.sql       reglas rotate_right / rotate_left; rota picks por seat antes del scoring
 0018_deck_modes.sql         modo de mazo configurable (rooms.deck_mode); build_rule_deck por modo
+0019_fix_none_rule.sql      defensivo: re-aplica score_picks con nullif('none') para garantizar reglas base
 ```
 **Setup limpio mínimo**: `0001_init.sql` + `0004_deck.sql` + `0005_redeal.sql`
 + `0008_split_advance.sql`.
