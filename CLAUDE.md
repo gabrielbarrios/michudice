@@ -59,6 +59,12 @@ Supabase (Postgres + Auth anónima + Realtime) + Tailwind**. Todo en TypeScript.
     decir, la carta que recibiste puede cancelarse si choca con otra ya
     rotada. La rotación no flipea signos ni desactiva cancelación
     (ver 0017).
+  - `double_low`: el dueño de la carta única más baja suma su valor el
+    DOBLE. El resto de las cartas únicas suman normal. La cancelación
+    por duplicado aplica como siempre; la escalera funciona igual y su
+    bono se acumula con el doble del individual (ej.: picks 4,5,6,8 →
+    dueño del 4 recibe 2×4 + escalera 15 = 23). Si solo queda un único,
+    ese se dobla; si todas cancelan, no hay deltas (ver 0020).
   Mazo: la composición depende de `rooms.deck_mode` (ver 0018), elegido al
   crear la sala desde la home. Modos:
    - `classic`  : `max(5, jugadores+1)` de cada regla (default).
@@ -222,6 +228,7 @@ funcionan idempotentes:
 0017_rotate_rules.sql       reglas rotate_right / rotate_left; rota picks por seat antes del scoring
 0018_deck_modes.sql         modo de mazo configurable (rooms.deck_mode); build_rule_deck por modo
 0019_fix_none_rule.sql      defensivo: re-aplica score_picks con nullif('none') para garantizar reglas base
+0020_double_low_rule.sql    carta de regla 'double_low': dueño de la carta única más baja suma doble
 ```
 **Setup limpio mínimo**: `0001_init.sql` + `0004_deck.sql` + `0005_redeal.sql`
 + `0008_split_advance.sql`.

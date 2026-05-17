@@ -364,6 +364,51 @@ describe("scoreRound con reglas especiales", () => {
     expect(totalsByPlayer(r.deltas)).toEqual({ d: 7 });
   });
 
+  it("double_low: el dueño de la carta única más baja suma el doble", () => {
+    // únicos 4, 6, 8 → a (4) suma 4×2=8, b (6) suma 6, c (8) suma 8.
+    const r = scoreRound(
+      [p("a", 4), p("b", 6), p("c", 8)],
+      "double_low",
+    );
+    expect(r.canceled).toEqual([]);
+    expect(r.ladders).toEqual([]);
+    const totals = totalsByPlayer(r.deltas);
+    expect(totals).toEqual({ a: 8, b: 6, c: 8 });
+    expect(r.rule).toBe("double_low");
+  });
+
+  it("double_low + escalera: doble individual y bono se acumulan", () => {
+    // únicos 4,5,6,8 → escalera 4-5-6 sum=15 ganador a (4).
+    // a = 4×2 (doble) + 15 (ladder) = 23. b=5, c=6, d=8.
+    const r = scoreRound(
+      [p("a", 4), p("b", 5), p("c", 6), p("d", 8)],
+      "double_low",
+    );
+    expect(r.ladders).toHaveLength(1);
+    expect(r.ladders[0].sum).toBe(15);
+    const totals = totalsByPlayer(r.deltas);
+    expect(totals).toEqual({ a: 23, b: 5, c: 6, d: 8 });
+  });
+
+  it("double_low con un solo único: ese único se dobla", () => {
+    // a y b cancelan; queda c con 7 → 7×2 = 14.
+    const r = scoreRound(
+      [p("a", 5), p("b", 5), p("c", 7)],
+      "double_low",
+    );
+    expect(r.canceled).toEqual([5]);
+    expect(totalsByPlayer(r.deltas)).toEqual({ c: 14 });
+  });
+
+  it("double_low sin únicos: sin deltas", () => {
+    const r = scoreRound(
+      [p("a", 6), p("b", 6)],
+      "double_low",
+    );
+    expect(r.deltas).toEqual([]);
+    expect(r.canceled).toEqual([6]);
+  });
+
   it("no_cancel: las cartas iguales siguen sumando y forman escalera", () => {
     // 5,5,6,7 sin cancelación: cada uno suma su carta + escalera 5+6+7=18
     // ganador de la escalera es uno de los 5 (el primero encontrado).

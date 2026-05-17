@@ -15,7 +15,8 @@ export type RuleKind =
   | "cancel_odd"
   | "none"
   | "rotate_right"
-  | "rotate_left";
+  | "rotate_left"
+  | "double_low";
 
 export interface RoomRow {
   id: string;

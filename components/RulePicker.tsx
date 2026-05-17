@@ -23,6 +23,7 @@ export const RULE_LABEL: Record<RuleKind, string> = {
   none: "⚪ Sin variante",
   rotate_right: "🔃 Cartas rotan a la derecha",
   rotate_left: "🔄 Cartas rotan a la izquierda",
+  double_low: "⬇️×2 La más baja vale doble",
 };
 export const RULE_DESC: Record<RuleKind, string> = {
   subtract:
@@ -49,6 +50,8 @@ export const RULE_DESC: Record<RuleKind, string> = {
     "Antes del reveal, cada jugador entrega su carta al vecino derecho (recibe la del izquierdo). La carta que recibas puede cancelarse si choca con otra igual.",
   rotate_left:
     "Antes del reveal, cada jugador entrega su carta al vecino izquierdo (recibe la del derecho). La carta que recibas puede cancelarse si choca con otra igual.",
+  double_low:
+    "El dueño de la carta única más baja suma su valor el doble. El resto suma normal. Si hay escalera, el bono se acumula con el doble.",
 };
 
 export default function RulePicker({ roundId, hand, myPick }: Props) {

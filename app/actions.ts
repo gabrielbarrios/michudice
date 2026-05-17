@@ -87,6 +87,7 @@ const RuleSchema = z.enum([
   "none",
   "rotate_right",
   "rotate_left",
+  "double_low",
 ]);
 
 export async function submitRulePickAction(roundId: string, ruleKind: string) {

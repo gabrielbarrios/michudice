@@ -114,6 +114,10 @@ export interface RoundResult {
  *                 que la carta que recibiste puede cancelarse si coincide
  *                 con otra. La rotación NO altera la regla aplicada al
  *                 puntaje (sign=+1, sin no_cancel, sin paridad).
+ *  - "double_low": el dueño de la carta única más baja suma su valor
+ *                 multiplicado por 2 en lugar de su valor nominal. El
+ *                 resto de las cartas únicas suman normal. La escalera
+ *                 funciona igual y su bono se acumula con el doble.
  */
 export type RuleKind =
   | "subtract"
@@ -127,7 +131,8 @@ export type RuleKind =
   | "cancel_odd"
   | "none"
   | "rotate_right"
-  | "rotate_left";
+  | "rotate_left"
+  | "double_low";
 export const RULE_KINDS: ReadonlyArray<RuleKind> = [
   "subtract",
   "no_cancel",
@@ -141,6 +146,7 @@ export const RULE_KINDS: ReadonlyArray<RuleKind> = [
   "none",
   "rotate_right",
   "rotate_left",
+  "double_low",
 ];
 
 /** Calcula el resultado de una ronda dados los picks y la regla activa. */
@@ -226,9 +232,17 @@ export function scoreRound(
   const rawLadders = detectLadders(uniqueValues, uniquePicks);
   const ladders = rawLadders.map((l) => ({ ...l, sum: l.sum * sign }));
 
+  const doubleLow = rule === "double_low";
+  const minUniqueValue = uniqueValues.length > 0 ? uniqueValues[0] : null;
+
   const deltas: ScoreDelta[] = [];
   for (const p of uniquePicks) {
-    deltas.push({ playerId: p.playerId, points: p.cardValue * sign, reason: "unique" });
+    const multiplier = doubleLow && p.cardValue === minUniqueValue ? 2 : 1;
+    deltas.push({
+      playerId: p.playerId,
+      points: p.cardValue * sign * multiplier,
+      reason: "unique",
+    });
   }
   for (const l of ladders) {
     deltas.push({ playerId: l.winnerId, points: l.sum, reason: "ladder" });

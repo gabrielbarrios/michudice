@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { startGameAction } from "@/app/actions";
 import type { DeckMode, PlayerRow, RoomRow } from "@/types/db";
 
@@ -20,16 +20,35 @@ const DECK_MODE_LABEL: Record<DeckMode, string> = {
 
 export default function Lobby({ room, players, meId }: Props) {
   const [pending, start] = useTransition();
+  const [copied, setCopied] = useState(false);
   const me = players.find((p) => p.id === meId);
   const isHost = me?.user_id === room.host_id;
   const canStart = players.length >= 3 && players.length <= room.max_players;
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(room.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // navigator.clipboard puede fallar fuera de contextos seguros (http).
+      // En ese caso silenciamos: el usuario aún puede copiar manualmente.
+    }
+  }
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-12">
       <div className="rounded-2xl bg-white/5 p-6 ring-1 ring-white/10">
         <p className="text-sm uppercase tracking-widest text-white/50">Código</p>
         <p className="font-display text-5xl tracking-[0.4em]">{room.code}</p>
-        <p className="mt-2 text-sm text-white/60">
+        <button
+          type="button"
+          onClick={copyCode}
+          className="mt-3 rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium text-white ring-1 ring-white/15 transition hover:bg-white/20"
+        >
+          {copied ? "✓ Copiado" : "📋 Copiar código"}
+        </button>
+        <p className="mt-3 text-sm text-white/60">
           Comparte el código. Mínimo 3, máximo {room.max_players} jugadores.
         </p>
         <p className="mt-1 text-xs text-white/50">
