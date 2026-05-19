@@ -78,6 +78,7 @@ export interface RoundResult {
   deltas: ScoreDelta[];         // puntos a sumar/restar por jugador
   rule: RuleKind | "normal";    // regla que aplicó esta ronda
   swap?: SwapInfo;              // detalle del intercambio cuando rule = 'swap'
+  randomCancelValue?: number;   // valor sorteado para rule = 'cancel_random'
 }
 
 /**
@@ -118,6 +119,11 @@ export interface RoundResult {
  *                 multiplicado por 2 en lugar de su valor nominal. El
  *                 resto de las cartas únicas suman normal. La escalera
  *                 funciona igual y su bono se acumula con el doble.
+ *  - "cancel_random": al revelar, el servidor sortea un valor 3..9 y todas
+ *                 las cartas con ese valor se cancelan. La cancelación por
+ *                 duplicado y la escalera siguen aplicando sobre el resto.
+ *                 El valor sorteado se reporta en `randomCancelValue` para
+ *                 que el cliente pueda animar una "ruleta" antes del reveal.
  */
 export type RuleKind =
   | "subtract"
@@ -132,7 +138,8 @@ export type RuleKind =
   | "none"
   | "rotate_right"
   | "rotate_left"
-  | "double_low";
+  | "double_low"
+  | "cancel_random";
 export const RULE_KINDS: ReadonlyArray<RuleKind> = [
   "subtract",
   "no_cancel",
@@ -147,15 +154,20 @@ export const RULE_KINDS: ReadonlyArray<RuleKind> = [
   "rotate_right",
   "rotate_left",
   "double_low",
+  "cancel_random",
 ];
 
-/** Calcula el resultado de una ronda dados los picks y la regla activa. */
+/** Calcula el resultado de una ronda dados los picks y la regla activa.
+ *  Para `rule = 'cancel_random'` se pasa `randomCancel` (valor 3..9 sorteado
+ *  server-side). Si la regla es otra, el parámetro se ignora. */
 export function scoreRound(
   picks: ReadonlyArray<Pick>,
   rule: RuleKind | null = null,
+  randomCancel: number | null = null,
 ): RoundResult {
   // 'none' es la carta "sin modificador": equivale a no aplicar regla.
   if (rule === "none") rule = null;
+  const cancelRandomValue = rule === "cancel_random" ? randomCancel : null;
 
   // Rotación: cada jugador entrega su carta al vecino indicado por la regla.
   // El cálculo posterior se hace sobre las picks rotadas.
@@ -197,7 +209,9 @@ export function scoreRound(
   for (const [value, count] of counts) {
     const parityCancel =
       (cancelEven && value % 2 === 0) || (cancelOdd && value % 2 !== 0);
-    if (parityCancel) canceled.push(value);
+    const randomCancelHit =
+      cancelRandomValue !== null && value === cancelRandomValue;
+    if (parityCancel || randomCancelHit) canceled.push(value);
     else if (count > 1 && !noCancel) canceled.push(value);
     else uniqueValues.push(value);
   }
@@ -281,6 +295,9 @@ export function scoreRound(
     deltas,
     rule: rule ?? "normal",
     ...(swapInfo ? { swap: swapInfo } : {}),
+    ...(cancelRandomValue !== null
+      ? { randomCancelValue: cancelRandomValue }
+      : {}),
   };
 }
 

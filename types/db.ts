@@ -16,7 +16,8 @@ export type RuleKind =
   | "none"
   | "rotate_right"
   | "rotate_left"
-  | "double_low";
+  | "double_low"
+  | "cancel_random";
 
 export interface RoomRow {
   id: string;
@@ -36,13 +37,14 @@ export interface RoomRow {
 export interface PlayerRow {
   id: string;
   room_id: string;
-  user_id: string;
+  user_id: string | null;
   name: string;
   seat: number;
   score: number;
   michudice_count: number;
   hand_size: number;
   rule_hand_size: number;
+  is_bot: boolean;
   joined_at: string;
 }
 
@@ -101,6 +103,7 @@ export interface RoundResultRow {
       low_original_player_id: string;
       high_original_player_id: string;
     } | null;
+    random_cancel_value?: number | null;
   };
   created_at: string;
 }

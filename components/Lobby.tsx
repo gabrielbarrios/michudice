@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { startGameAction } from "@/app/actions";
+import { addBotAction, startGameAction } from "@/app/actions";
 import type { DeckMode, PlayerRow, RoomRow } from "@/types/db";
 
 interface Props {
@@ -20,10 +20,12 @@ const DECK_MODE_LABEL: Record<DeckMode, string> = {
 
 export default function Lobby({ room, players, meId }: Props) {
   const [pending, start] = useTransition();
+  const [addingBot, addBot] = useTransition();
   const [copied, setCopied] = useState(false);
   const me = players.find((p) => p.id === meId);
   const isHost = me?.user_id === room.host_id;
   const canStart = players.length >= 3 && players.length <= room.max_players;
+  const canAddBot = isHost && players.length < room.max_players;
 
   async function copyCode() {
     try {
@@ -60,9 +62,21 @@ export default function Lobby({ room, players, meId }: Props) {
       </div>
 
       <section>
-        <h2 className="mb-3 text-lg font-semibold">
-          Jugadores ({players.length}/{room.max_players})
-        </h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">
+            Jugadores ({players.length}/{room.max_players})
+          </h2>
+          {canAddBot && (
+            <button
+              type="button"
+              disabled={addingBot}
+              onClick={() => addBot(() => addBotAction(room.id))}
+              className="rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium text-white ring-1 ring-white/15 transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {addingBot ? "Agregando..." : "🤖 Agregar bot"}
+            </button>
+          )}
+        </div>
         <ul className="grid gap-2 sm:grid-cols-2">
           {players.map((p) => (
             <li
@@ -70,7 +84,9 @@ export default function Lobby({ room, players, meId }: Props) {
               className="flex items-center justify-between rounded-md bg-white/5 px-4 py-2 ring-1 ring-white/10"
             >
               <span>
-                {p.name} {p.user_id === room.host_id && <span>👑</span>}
+                {p.name}{" "}
+                {p.is_bot && <span title="Bot">🤖</span>}
+                {p.user_id === room.host_id && <span>👑</span>}
                 {p.id === meId && <span className="ml-1 text-emerald-300">(tú)</span>}
               </span>
               <span className="text-xs text-white/40">asiento {p.seat + 1}</span>

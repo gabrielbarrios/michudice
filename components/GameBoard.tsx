@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import type {
   PlayerRow,
   RoomRow,
@@ -17,6 +17,7 @@ import {
   advanceRoundAction,
   redealHandsAction,
   redealRuleHandsAction,
+  runBotsAction,
   tryRevealAction,
 } from "@/app/actions";
 
@@ -47,7 +48,9 @@ export default function GameBoard({
 }: Props) {
   const [, startReveal] = useTransition();
   const [, startAdvance] = useTransition();
+  const [, startBots] = useTransition();
   const advanceTriggered = useRef<string | null>(null);
+  const botsTriggered = useRef<string | null>(null);
 
   // Cuando todos eligen número Y el Michudice eligió regla, intenta revelar.
   useEffect(() => {
@@ -59,6 +62,23 @@ export default function GameBoard({
   }, [round, picks.length, players.length, rulePick]);
 
   const isHost = players.find((p) => p.id === meId)?.user_id === room.host_id;
+
+  // Solo el host dispara la acción de bots: detecta picks pendientes de bots
+  // y/o regla pendiente cuando el Michudice es bot. La server action es
+  // idempotente, pero usamos un ref para no spamearla en cada render.
+  useEffect(() => {
+    if (!round || round.status !== "picking" || !isHost) return;
+    const botMissingPick = players.some(
+      (p) => p.is_bot && !picks.some((x) => x.player_id === p.id),
+    );
+    const michudice = players.find((p) => p.id === round.michudice_player_id);
+    const michudiceBotMissingRule = !!michudice?.is_bot && !rulePick;
+    if (!botMissingPick && !michudiceBotMissingRule) return;
+    const key = `${round.id}:${picks.length}:${rulePick ? 1 : 0}`;
+    if (botsTriggered.current === key) return;
+    botsTriggered.current = key;
+    startBots(() => runBotsAction(round.id));
+  }, [round, picks, rulePick, players, isHost]);
   const isRevealing =
     !!round && (round.status === "revealed" || round.status === "scored");
   const isMichudice = !!round && round.michudice_player_id === meId;
@@ -221,6 +241,7 @@ export default function GameBoard({
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-xs text-white/30">#{p.seat + 1}</span>
                   <span>{p.name}</span>
+                  {p.is_bot && <span title="Bot">🤖</span>}
                   {p.id === meId && (
                     <span className="text-emerald-300">(tú)</span>
                   )}
@@ -329,6 +350,10 @@ export default function GameBoard({
   );
 }
 
+const ROLL_DURATION_MS = 2500;
+const ROLL_TICK_MS = 80;
+const RANDOM_RANGE = [3, 4, 5, 6, 7, 8, 9];
+
 function RevealOverlay({
   players,
   picks,
@@ -348,6 +373,38 @@ function RevealOverlay({
   const ladders = result?.payload.ladders ?? [];
   const canceled = result?.payload.canceled ?? [];
   const deltas = result?.payload.deltas ?? [];
+  const randomCancelValue = result?.payload.random_cancel_value ?? null;
+  const isRandomRule = rule === "cancel_random";
+
+  // Animación de "ruleta" para cancel_random: cicla 3..9 hasta que arriba el
+  // resultado del servidor; luego corre ROLL_DURATION_MS y se detiene en el
+  // valor real. Mientras dura el roll ocultamos cartas/puntajes para que la
+  // sorpresa sea legible.
+  const [rollDone, setRollDone] = useState(!isRandomRule);
+  const [rollTick, setRollTick] = useState(0);
+
+  useEffect(() => {
+    if (!isRandomRule) {
+      setRollDone(true);
+      return;
+    }
+    if (randomCancelValue == null) return;
+    setRollDone(false);
+    const interval = setInterval(() => {
+      setRollTick((t) => t + 1);
+    }, ROLL_TICK_MS);
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      setRollDone(true);
+    }, ROLL_DURATION_MS);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [isRandomRule, randomCancelValue]);
+
+  const rollingDisplay =
+    RANDOM_RANGE[rollTick % RANDOM_RANGE.length];
 
   return (
     <div className="reveal-overlay fixed inset-0 z-50 flex items-center justify-center px-4">
@@ -367,54 +424,81 @@ function RevealOverlay({
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          {sortedPicks.map((p) => (
-            <div key={p.id} className="flex flex-col items-center gap-1">
-              <PlayedCard value={p.card_value} revealed />
-              <span className="text-xs text-white/50">
-                {nameOf(p.player_id)}
-              </span>
+        {isRandomRule && (
+          <div className="flex flex-col items-center gap-2 rounded-xl bg-rose-500/10 p-4 ring-1 ring-rose-300/30">
+            <p className="text-xs uppercase tracking-widest text-rose-200/70">
+              Número que se cancela
+            </p>
+            <div
+              className={
+                "random-roll flex h-20 w-20 items-center justify-center rounded-2xl font-display text-5xl font-bold ring-2 " +
+                (rollDone
+                  ? "random-roll-stopped bg-rose-400 text-black ring-rose-200"
+                  : "bg-white/10 text-white ring-white/30")
+              }
+            >
+              {rollDone ? randomCancelValue ?? "?" : rollingDisplay}
             </div>
-          ))}
-        </div>
-
-        {result ? (
-          <div className="space-y-2 text-sm">
-            {canceled.length > 0 && (
-              <p className="text-white/70">
-                ❌ Cancelados: {canceled.join(", ")}
-              </p>
-            )}
-            {ladders.map((l, i) => (
-              <p key={i} className="text-amber-200">
-                🪜 Escalera {l.cards.join(" → ")} = {l.sum >= 0 ? "+" : ""}
-                {l.sum} para <b>{nameOf(l.winner_id)}</b>
-              </p>
-            ))}
-            {deltas.length > 0 ? (
-              <ul className="space-y-1 text-white/80">
-                {deltas.map((d, i) => (
-                  <li key={i}>
-                    <span className="text-emerald-300">
-                      {nameOf(d.player_id)}
-                    </span>{" "}
-                    {d.points >= 0 ? "+" : ""}
-                    {d.points} (
-                    {d.reason === "ladder"
-                      ? "escalera"
-                      : d.reason === "neighbor"
-                        ? "vecino"
-                        : "carta"}
-                    )
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-white/60">Nadie sumó esta ronda.</p>
-            )}
+            <p className="text-xs text-rose-100/70">
+              {rollDone
+                ? "Esas cartas se cancelan en esta ronda."
+                : "Sorteando…"}
+            </p>
           </div>
-        ) : (
-          <p className="text-center text-white/60">Calculando puntaje...</p>
+        )}
+
+        {rollDone && (
+          <>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {sortedPicks.map((p) => (
+                <div key={p.id} className="flex flex-col items-center gap-1">
+                  <PlayedCard value={p.card_value} revealed />
+                  <span className="text-xs text-white/50">
+                    {nameOf(p.player_id)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {result ? (
+              <div className="space-y-2 text-sm">
+                {canceled.length > 0 && (
+                  <p className="text-white/70">
+                    ❌ Cancelados: {canceled.join(", ")}
+                  </p>
+                )}
+                {ladders.map((l, i) => (
+                  <p key={i} className="text-amber-200">
+                    🪜 Escalera {l.cards.join(" → ")} = {l.sum >= 0 ? "+" : ""}
+                    {l.sum} para <b>{nameOf(l.winner_id)}</b>
+                  </p>
+                ))}
+                {deltas.length > 0 ? (
+                  <ul className="space-y-1 text-white/80">
+                    {deltas.map((d, i) => (
+                      <li key={i}>
+                        <span className="text-emerald-300">
+                          {nameOf(d.player_id)}
+                        </span>{" "}
+                        {d.points >= 0 ? "+" : ""}
+                        {d.points} (
+                        {d.reason === "ladder"
+                          ? "escalera"
+                          : d.reason === "neighbor"
+                            ? "vecino"
+                            : "carta"}
+                        )
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-white/60">Nadie sumó esta ronda.</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-center text-white/60">Calculando puntaje...</p>
+            )}
+          </>
         )}
 
         <div className="h-1 overflow-hidden rounded-full bg-white/10">

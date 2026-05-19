@@ -65,6 +65,14 @@ Supabase (Postgres + Auth anónima + Realtime) + Tailwind**. Todo en TypeScript.
     bono se acumula con el doble del individual (ej.: picks 4,5,6,8 →
     dueño del 4 recibe 2×4 + escalera 15 = 23). Si solo queda un único,
     ese se dobla; si todas cancelan, no hay deltas (ver 0020).
+  - `cancel_random`: al revelar la ronda, `reveal_round` sortea un valor
+    aleatorio entre 3 y 9 (`floor(random()*7)+3`) y lo pasa como
+    `p_random_cancel` a `score_picks`. Todas las cartas con ese valor se
+    cancelan (igual que la cancelación por paridad). La cancelación por
+    duplicado y la escalera siguen aplicando sobre el resto. El valor
+    sorteado se incluye en el payload del resultado como
+    `random_cancel_value` para que `RevealOverlay` (GameBoard.tsx)
+    anime una "ruleta" 3..9 antes de mostrar las cartas (ver 0021).
   Mazo: la composición depende de `rooms.deck_mode` (ver 0018), elegido al
   crear la sala desde la home. Modos:
    - `classic`  : `max(5, jugadores+1)` de cada regla (default).
@@ -83,6 +91,9 @@ Supabase (Postgres + Auth anónima + Realtime) + Tailwind**. Todo en TypeScript.
   4. Si el efecto cambia signos o cancelaciones, replicar la lógica de
      `v_sign` / `v_no_cancel` en ambos sitios.
   5. Añadir UI en `CardPicker`/`GameBoard` para que el Michudice la vea.
+  6. **Actualizar `bot_submit_rule_pick` (migración 0022)**: la lista de
+     `p_rule_kind in (...)` debe incluir el nuevo kind, sino un bot
+     Michudice no podrá jugar esa regla y `runBotsAction` fallará.
   - Si una sala vieja quedó sin cartas de regla (creada antes de aplicar las
     migraciones nuevas), el host puede tocar **"Repartir cartas de regla"**
     en el banner amarillo: dispara `redealRuleHandsAction` →
@@ -123,7 +134,9 @@ types/db.ts                Tipos de filas
 ## Modelo de datos (resumen)
 - `rooms(id, code, status, host_id, max_players, michudice_target, current_round, current_michudice, rule_deck text[])`
   El `rule_deck` guarda las cartas de regla aún no repartidas.
-- `players(id, room_id, user_id, name, seat, score, michudice_count, hand_size, rule_hand_size)`
+- `players(id, room_id, user_id, name, seat, score, michudice_count, hand_size, rule_hand_size, is_bot)`
+  `user_id` es **nullable**: los bots (`is_bot = true`) no tienen cuenta en
+  `auth.users`. Las RPCs `bot_*` validan `is_bot = true` en vez de `auth.uid()`.
 - `player_hands(player_id, hand int[])` ← mano numérica, RLS solo dueño.
 - `player_rule_hands(player_id, hand text[])` ← mano de cartas de regla, RLS solo dueño.
 - `rounds(id, room_id, round_number, michudice_player_id, status, rule_played text|null)` con
@@ -154,6 +167,15 @@ types/db.ts                Tipos de filas
   in_progress sin manos (debug / partidas antiguas).
 - `score_picks(p_picks jsonb, p_rule text default null)` → puro, espejo SQL
   de `lib/game.ts:scoreRound`. Acepta `'subtract'`, `'no_cancel'` o NULL.
+- `add_bot(p_room_id, p_name)` → inserta un player con `is_bot=true`,
+  `user_id=null` y seat consecutivo. Solo válido en estado `lobby`. No valida
+  `auth.uid()`: se invoca con SERVICE_ROLE_KEY desde `addBotAction`, que
+  verifica que el caller sea el host humano antes de llamarla.
+- `bot_submit_pick(p_player_id, p_round_id, p_card_value)` /
+  `bot_submit_rule_pick(p_player_id, p_round_id, p_rule_kind)` → espejos
+  sin `auth.uid()` de `submit_pick`/`submit_rule_pick`. Validan
+  `players.is_bot = true`. Solo callables vía SERVICE_ROLE_KEY desde
+  `runBotsAction`.
 
 ⚠️ **Cuidado con slicing de arrays en plpgsql**: `arr[i:j]` PRESERVA la cota
 inferior, así que `result[1]` puede ser NULL. Construir runs con
@@ -229,6 +251,8 @@ funcionan idempotentes:
 0018_deck_modes.sql         modo de mazo configurable (rooms.deck_mode); build_rule_deck por modo
 0019_fix_none_rule.sql      defensivo: re-aplica score_picks con nullif('none') para garantizar reglas base
 0020_double_low_rule.sql    carta de regla 'double_low': dueño de la carta única más baja suma doble
+0021_cancel_random_rule.sql carta 'cancel_random': sortea valor 3..9 al revelar y cancela esa carta; score_picks gana parámetro p_random_cancel y payload añade random_cancel_value
+0022_bots.sql               players.is_bot + user_id nullable; add_bot/bot_submit_pick/bot_submit_rule_pick para jugadores controlados por el servidor
 ```
 **Setup limpio mínimo**: `0001_init.sql` + `0004_deck.sql` + `0005_redeal.sql`
 + `0008_split_advance.sql`.
